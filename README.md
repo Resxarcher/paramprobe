@@ -1,9 +1,12 @@
 # ParamProbe
 a regex-base tool written in golang for grab parameters from url's.
 # Install
-**get binary file:**
+**binary file**
+
 ``go install github.com/resxarcher/paramprobe@latest``
-**get source code:**
+
+**source code**
+
 ``go get -u github.com/resxarcher/paramprobe``
 # Usage
 ```
