@@ -1,5 +1,11 @@
 # ParamProbe
 a regex-base tool written in golang for grab parameters from url's.
+# Features
+- Fast.
+- Extract attrebuites like name and id.
+- Extract JSON Object's
+- Extract Parameters from anchor tags.
+- unique and sort.
 # Install
 **binary file**
 
