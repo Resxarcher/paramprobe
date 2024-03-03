@@ -20,14 +20,18 @@ type Response struct {
 	URL     string
 	Status  string
 	Context string
-	Err     error
 }
 
+// regex for extract html tags
 const combinedRegex = `<input[^>]*\sname\s*=\s*["']([^"']*)["']|<a\s[^>]*\bhref\s*=\s*["']([^"']*)["'][^>]*>|<form[^>]*\sname\s*=\s*["']([^"']*)["']|<map[^>]*\sname\s*=\s*["']([^"']*)["']|<fieldset[^>]*\sname\s*=\s*["']([^"']*)["']|<output[^>]*\sname\s*=\s*["']([^"']*)["']|<iframe[^>]*\sname\s*=\s*["']([^"']*)["']|<input[^>]*\sid\s*=\s*["']([^"']*)["']|["']([^"']+?)["']\s*:\s*|<object[^>]*\sname\s*=\s*["']([^"']*)["']|<param[^>]*\sname\s*=\s*["']([^"']*)["']|<textarea[^>]*\sname\s*=\s*["']([^"']*)["']|<select[^>]*\sname\s*=\s*["']([^"']*)["']`
-const filterRegex = `(http:?|tel:?|\"|\s|\n|-|\.|\@|\+|\$|\#|\'|\/)`
 
-var htmlEncodedFilters = []string{"&lt;", "lt;", "&gt;", "gt", "amp;", "&amp;", "&quot;", "quot;", "apos;", "&apos;", "&nbsp;", "nbsp;"}
+// filter regex for filtering output
+const filterRegex = `(:|\"|\s|\n|-|\.|\@|\+|\$|\#|\'|\/)`
 
+// html encode replacing + charchters needs to replace with nothing
+var htmlEncodedFilters = []string{"&lt;", "lt;", "\\", "&gt;", "gt", "amp;", "?", "%", ";", "&amp;", "&quot;", "quot;", "apos;", "&apos;", "&nbsp;", "nbsp;"}
+
+// methos for header argument
 func (hs *headerSlice) String() string {
 	return strings.Join(*hs, ", ")
 }
@@ -38,7 +42,7 @@ func (hs *headerSlice) Set(value string) error {
 }
 
 // http prober
-func httpProber(u string, header []string, delay, timeout int, ch chan<- Response, wg *sync.WaitGroup) {
+func paramProbe(u string, header []string, delay, timeout int, ch chan<- Response, wg *sync.WaitGroup) {
 	defer wg.Done()
 	// timeout
 	client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
@@ -56,30 +60,30 @@ func httpProber(u string, header []string, delay, timeout int, ch chan<- Respons
 			}
 		}
 	}
-	// delay
+	// set delay
 	if delay > 1 {
 		time.Sleep(time.Second * time.Duration(delay))
 	}
+	// send request
 	resp, err := client.Do(req)
 	if err != nil {
-		ch <- Response{URL: u, Status: resp.Status, Err: err, Context: ""}
 		return
 	}
-
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
-
 	if err != nil {
-		ch <- Response{URL: u, Status: resp.Status, Err: err, Context: ""}
 		return
 	}
+	// find regex patterns
 	findPattern := regexp.MustCompile(combinedRegex)
-
+	// extract keys
 	matches := findPattern.FindAllStringSubmatch(string(body), -1)
 	for _, match := range matches {
 		for _, l := range match[1:] {
 			if l != "" {
+				// extract query paramater from anchor tag
 				queryParams := extractQueryParams(l)
+				// filter
 				regexFilter, err := regexp.MatchString(filterRegex, l)
 				if err != nil {
 					return
@@ -92,13 +96,13 @@ func httpProber(u string, header []string, delay, timeout int, ch chan<- Respons
 						}
 						if !regexFilter {
 							result := removePrefixes(m, htmlEncodedFilters)
-							ch <- Response{URL: u, Status: resp.Status, Err: nil, Context: result}
+							ch <- Response{URL: u, Status: resp.Status, Context: result}
 						}
 					}
 				}
 				if !regexFilter {
 					result := removePrefixes(l, htmlEncodedFilters)
-					ch <- Response{URL: u, Status: resp.Status, Err: nil, Context: result}
+					ch <- Response{URL: u, Status: resp.Status, Context: result}
 				}
 
 			}
@@ -182,40 +186,34 @@ func main() {
 	var wg sync.WaitGroup
 
 	var (
-		domain  string
-		lists   string
+		host    string
+		hosts   string
 		timeout int
 		delay   int
 		path    string
 		header  headerSlice
 	)
 	responseCh := make(chan Response)
-	flag.StringVar(&domain, "domain", "", "single domain to process")
-	flag.StringVar(&lists, "lists", "", "file list to process")
+	flag.StringVar(&host, "host", "", "single host to process")
+	flag.StringVar(&hosts, "hosts", "", "path of hosts file to process")
 	flag.StringVar(&path, "output", "", "path to save output")
 	flag.Var(&header, "header", "custom header/cookie to include in requests like that: Cookie:value, Origin:value, Host:value")
 	flag.IntVar(&timeout, "timeout", 10, "timeout in seconds")
 	flag.IntVar(&delay, "delay", -1, "durations between each HTTP requests")
 
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options]\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "OPTIONS:\n")
-		flag.PrintDefaults()
-	}
-
 	flag.Parse()
 
-	if domain == "" && lists == "" {
+	if host == "" && hosts == "" {
 		flag.Usage()
 	}
 
-	if domain != "" && lists == "" {
+	if host != "" && hosts == "" {
 		wg.Add(1)
-		go httpProber(domain, header, delay, timeout, responseCh, &wg)
+		go paramProbe(host, header, delay, timeout, responseCh, &wg)
 	}
 
-	if lists != "" && domain == "" {
-		file, err := os.Open(lists)
+	if hosts != "" && host == "" {
+		file, err := os.Open(hosts)
 
 		if err != nil {
 			fmt.Println("File You Proveded is not found: ", err)
@@ -227,7 +225,7 @@ func main() {
 		for scanner.Scan() {
 			url := scanner.Text()
 			wg.Add(1)
-			go httpProber(url, header, delay, timeout, responseCh, &wg)
+			go paramProbe(url, header, delay, timeout, responseCh, &wg)
 		}
 		defer file.Close()
 	}
